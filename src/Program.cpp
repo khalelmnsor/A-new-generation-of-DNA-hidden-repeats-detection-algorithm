@@ -13,7 +13,7 @@ using namespace std;
 using CountTable = vector<map<char, int>>;
 
 // Parameters
-const int L = 840 * 1;    // Segment length
+const int L = 200;        // Segment length
 const double tau1 = 0.25; // High p-value threshold
 const double tau2 = 0.05; // Low p-value threshold
 // const double alpha = 0.05;
@@ -21,8 +21,8 @@ const double tau2 = 0.05; // Low p-value threshold
 struct Segment
 {
     string sequence;
+    string canonicalRepresentativeWord;
     string representativeWord;
-    string representativeWord111111;
     vector<array<int, 4>> positioncounts;
     double combinedPValue;
     double pNull;
@@ -32,7 +32,7 @@ struct Segment
     double avg = 0.0;
     string noise = "no";
     double strengthScore = 0.0;  // למשל -log10(empiricalP)
-    string strength = "unknown"; // noise / weak / strongس
+    string strength = "unknown"; // noise / weak / strong
 };
 
 // Function declarations
@@ -67,9 +67,10 @@ int CanonicalRotationOffset(const string &w);
 void AddCounts(vector<array<int, 4>> &a, const vector<array<int, 4>> &b);
 
 vector<array<double, 4>> ComputeLocalDistributions(const string &dna, int W, double pseudo = 0);
-string GenerateRandomDNA(const vector<array<double, 4>> &probs, unsigned seed);
-vector<Segment> RunPipeline(const string &dna);
-void AnnotateSegmentsWithNull(vector<Segment> &realSegs, const string &dna, int W);
+string GenerateRandomDNA(const vector<array<double, 4>> &probs);
+vector<Segment> RunPipeline(const string &dna, int mode);
+vector<Segment> AnnotateSegmentsWithNull1(vector<Segment> &realSegs, const string &dna, int W, int mode);
+void AnnotateSegmentsWithNull2(vector<Segment> &realSegs, const string &dna, int W);
 string FormatSequenceByK(const string &seq, int K);
 vector<string> SplitByLength(const string &dna);
 
@@ -86,7 +87,7 @@ int main()
 
     // string dna = "CATACCCCACATCAACATGGAGATCACACACCTCAACACGGAGATCACACACATCAACAT"; // eror ttts
     // string dna = "ACGT GTCA GATCTGACGTTCGAGTCTAGCTAGTCGATCGATGCTAGTCGATCGTAGCTAG"; // eror4*
-    string dna = ReadFNA("../Data/gene.fna");
+    string dna = ReadFNA("C:/Users/user/Desktop/project/Data/gene.fna");
 
     // string dna = "atgtgagat";
     //   dna = NormalizeAndCompressN(dna);
@@ -96,9 +97,9 @@ int main()
     // cout << "DNA Sequence Preview: " << dna << endl;s
 
     // 1. Segment sequence
-    vector<Segment> segments = SegmentSequence2(dna);
+    vector<Segment> segments = SegmentSequence1(dna);
     //////////////////
-    AnnotateSegmentsWithNull(segments, dna, 100);
+    vector<Segment> nullSegs = AnnotateSegmentsWithNull1(segments, dna, L / 10, 1);
 
     // 2. Merge same-word segments
     // segments = MergeSameWordSegments(segments); ////////////////////////////////
@@ -109,20 +110,43 @@ int main()
     // segments = SplitIncoherentSegments(segments);
     // Output results
     cout << "\nDetected Hidden Repeat Segments:\n";
-    for (auto &s : segments)
+    for (size_t i = 0; i < segments.size() && i < nullSegs.size(); ++i)
     {
-        cout << "Start: " << s.startIndex
-             << ", Len: " << s.length
-             << ", Word: " << s.representativeWord << "\n"
-             << ", Wordwww: " << s.representativeWord111111 << "\n"
-             << ", real Combined P-value: " << s.combinedPValue
-             << ", random Combined P-value: " << s.pNull << "\n"
-             << ", merge noise? " << s.noise
-             << ", AVG: " << s.avg << "\n"
-             << ", strengthScore: " << s.strengthScore
-             << ", strength: " << s.strength << "\n"
-             << ", the sequence: " << FormatSequenceByK(s.sequence, s.representativeWord.size()) << "\n"
-             << endl;
+        Segment &s = segments[i];
+        Segment &nulls = nullSegs[i];
+        cout << "====================================================\n";
+        cout << "[SEGMENT " << i << "]\n";
+
+        cout << "Location   : start=" << s.startIndex
+             << ", length=" << s.length << "\n";
+
+        cout << "Word(real) : " << s.representativeWord
+             << "  | canonical: " << s.canonicalRepresentativeWord << "\n";
+
+        cout << "Word(null) : " << nulls.representativeWord
+             << "  | canonical: " << nulls.canonicalRepresentativeWord << "\n";
+
+        cout << "P-values   : real=" << s.combinedPValue
+             << " | null(parallel)=" << nulls.combinedPValue
+             << " | null(K-matched)=" << s.pNull << "\n";
+
+        cout << "Strength   : score=" << s.strengthScore
+             << " | class=" << s.strength
+             << " | merge-noise=" << s.noise << "\n";
+
+        cout << "AVG match  : " << s.avg << "%\n";
+
+        cout << "Sequence (real):\n"
+             << FormatSequenceByK(
+                    s.sequence,
+                    s.canonicalRepresentativeWord.size())
+             << "\n";
+
+        cout << "Sequence (null):\n"
+             << FormatSequenceByK(
+                    nulls.sequence,
+                    nulls.canonicalRepresentativeWord.size())
+             << "\n";
     }
 
     return 0;
@@ -164,12 +188,12 @@ vector<Segment> SegmentSequence1(const string &dna)
                     bestK = k;
                 }
             }
-            seg.representativeWord111111 = bestW;
-            seg.representativeWord = CanonicalRotation(bestW);
+            seg.representativeWord = bestW;
+            seg.canonicalRepresentativeWord = CanonicalRotation(bestW);
 
             seg.avg = bestAvg;
             int shift = CanonicalRotationOffset(bestW);
-            seg.representativeWord = CanonicalRotation(bestW);
+            seg.canonicalRepresentativeWord = CanonicalRotation(bestW);
 
             int numKmers = seg.sequence.size() / bestK;
             seg.positioncounts = ComputePositionCounts(seg.sequence, bestK);
@@ -239,16 +263,16 @@ vector<Segment> SegmentSequence2(const string &dna)
                     bestP = combinedP;
                     bestK = k;
                     bestWord = canonW;
-                    seg.representativeWord111111 = w;
+                    seg.representativeWord = w;
                     bestCounts = counts;
                 }
             }
 
             // ===== מילוי הסגמנט =====
-            seg.representativeWord = bestWord;
+            seg.canonicalRepresentativeWord = bestWord;
             seg.positioncounts = bestCounts;
             seg.combinedPValue = bestP;
-            seg.avg = ComputeAvgMatch1(buffer, seg.representativeWord111111);
+            seg.avg = ComputeAvgMatch1(buffer, seg.representativeWord);
 
             seg.length = buffer.size();
             seg.startIndex = i - buffer.size() + 1;
@@ -572,10 +596,10 @@ vector<Segment> MergeSameWordSegments(const vector<Segment> &segments)
 
     for (size_t i = 1; i < segments.size(); ++i)
     {
-        int K1 = segments[i].representativeWord.size();
-        int K2 = current.representativeWord.size();
+        int K1 = segments[i].canonicalRepresentativeWord.size();
+        int K2 = current.canonicalRepresentativeWord.size();
 
-        if (segments[i].representativeWord == current.representativeWord && K1 == K2)
+        if (segments[i].canonicalRepresentativeWord == current.canonicalRepresentativeWord && K1 == K2)
         {
             // קודם להגדיל אורך
             int oldLen = current.length;
@@ -965,8 +989,9 @@ vector<array<double, 4>> ComputeLocalDistributions(
         return -1;
     };
 
-    int L = 0, R = min(n - 1, W);
-    for (int i = L; i <= R; ++i)
+    int left = 0, right = min(n - 1, W);
+
+    for (int i = left; i <= right; ++i)
         if (idx(dna[i]) >= 0)
             cnt[idx(dna[i])]++;
 
@@ -979,20 +1004,21 @@ vector<array<double, 4>> ComputeLocalDistributions(
         int newL = max(0, i + 1 - W);
         int newR = min(n - 1, i + 1 + W);
 
-        while (L < newL)
-            if (idx(dna[L]) >= 0)
-                cnt[idx(dna[L++])]--;
-        while (R < newR)
-            if (idx(dna[++R]) >= 0)
-                cnt[idx(dna[R])]++;
+        while (left < newL)
+            if (idx(dna[left]) >= 0)
+                cnt[idx(dna[left++])]--;
+        while (right < newR)
+            if (idx(dna[++right]) >= 0)
+                cnt[idx(dna[right])]++;
     }
     return probs;
 }
 
 string GenerateRandomDNA(
-    const vector<array<double, 4>> &probs, unsigned seed)
+    const vector<array<double, 4>> &probs)
 {
-    mt19937 rng(seed);
+    random_device rd;
+    mt19937 rng(rd());
     uniform_real_distribution<double> U(0, 1);
 
     string s(probs.size(), 'A');
@@ -1012,11 +1038,62 @@ string GenerateRandomDNA(
     return s;
 }
 
-vector<Segment> RunPipeline(const string &dna)
+vector<Segment> RunPipeline(const string &dna, int mode)
 {
-    vector<Segment> segs = SegmentSequence1(dna);
-    // segs = MergeSameWordSegments(segs);
+    vector<Segment> segs;
+
+    if (mode == 1)
+    {
+        segs = SegmentSequence1(dna);
+    }
+    else if (mode == 2)
+    {
+        segs = SegmentSequence2(dna);
+    }
+    else
+    {
+        cerr << "RunPipeline: invalid mode = " << mode << endl;
+        return {};
+    }
+
     return segs;
+}
+
+vector<Segment> AnnotateSegmentsWithNull1(
+    vector<Segment> &realSegs,
+    const string &dna,
+    int W, int mode)
+{
+    // 1️⃣ התפלגות מקומית
+    auto probs = ComputeLocalDistributions(dna, W);
+
+    // 2️⃣ יצירת DNA רנדומלי מקביל
+    string rndDNA = GenerateRandomDNA(probs);
+
+    // 3️⃣ הרצת אותו pipeline בדיוק
+    vector<Segment> nullSegs = RunPipeline(rndDNA, mode);
+
+    // 4️⃣ השוואה אחד-לאחד
+    int N = min(realSegs.size(), nullSegs.size());
+
+    for (int i = 0; i < N; ++i)
+    {
+        double pReal = realSegs[i].combinedPValue;
+        double pNull = nullSegs[i].combinedPValue;
+        realSegs[i].pNull = pNull;
+        // יחס פשוט וברור
+        double ratio = max(pNull, 1e-300) / max(pReal, 1e-300);
+
+        realSegs[i].strengthScore = ratio;
+
+        if (ratio > 10)
+            realSegs[i].strength = "strong";
+        else if (ratio > 1)
+            realSegs[i].strength = "weak";
+        else
+            realSegs[i].strength = "noise";
+    }
+    return nullSegs;
 }
 
 double ComputeSegmentPValue(const string &segment, int K)
@@ -1043,7 +1120,7 @@ vector<string> SplitByLength(const string &dna)
     return chunks;
 }
 
-void AnnotateSegmentsWithNull(
+void AnnotateSegmentsWithNull2(
     vector<Segment> &realSegs,
     const string &dna,
     int W)
@@ -1052,7 +1129,7 @@ void AnnotateSegmentsWithNull(
     auto probs = ComputeLocalDistributions(dna, W);
 
     // 2️⃣ יצירת DNA רנדומלי
-    string rndDNA = GenerateRandomDNA(probs, 1234);
+    string rndDNA = GenerateRandomDNA(probs);
 
     // 3️⃣ חיתוך רנדומלי לפי L בלבד
     auto rndChunks = SplitByLength(rndDNA);
@@ -1063,7 +1140,7 @@ void AnnotateSegmentsWithNull(
     {
         Segment &s = realSegs[i];
 
-        int K = s.representativeWord.size(); // K של האמיתי
+        int K = s.canonicalRepresentativeWord.size(); // K של האמיתי
 
         double pReal = s.combinedPValue;
 
