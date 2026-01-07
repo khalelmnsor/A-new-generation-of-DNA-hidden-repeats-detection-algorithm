@@ -14,7 +14,7 @@ using namespace std;
 using CountTable = vector<map<char, int>>;
 
 // Parameters
-const int L = 840 * 2; // Segment length
+const int L = 840; // Segment length
 
 // const double alpha = 0.05;
 
@@ -285,7 +285,7 @@ vector<Segment> SegmentSequence2(const string &dna)
             string bestWord;
             vector<array<int, 4>> bestCounts;
 
-            for (int k = 3; k <= 6; ++k)
+            for (int k = 3; k < 9; ++k)
             {
                 int numKmers = buffer.size() / k;
                 if (numKmers == 0)
