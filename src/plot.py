@@ -6,23 +6,47 @@ from matplotlib.ticker import MultipleLocator
 from scipy.stats import ks_2samp
 
 # ============================================================
-# Setup
+# Environment setup
 # ============================================================
+# Set working directory to the script location to ensure
+# reproducible relative file paths (CSV input / figure output)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 os.chdir(BASE_DIR)
 
+# Output directory for all generated figures
 OUT_DIR = "figures"
 os.makedirs(OUT_DIR, exist_ok=True)
 
 # ============================================================
 # Helper functions
 # ============================================================
+
 def cdf(values):
+    """
+    Compute the empirical cumulative distribution function (CDF).
+
+    Parameters
+    ----------
+    values : array-like
+        Input values (e.g., -log10(P-values)).
+
+    Returns
+    -------
+    x : ndarray
+        Sorted values.
+    y : ndarray
+        Empirical CDF values in [0,1].
+    """
     x = np.sort(values)
     y = np.arange(1, len(x) + 1) / len(x)
     return x, y
 
+
 def beautify(ax, xM=None, xm=None, yM=None, ym=None):
+    """
+    Apply consistent grid and tick formatting to matplotlib axes.
+    This is a visualization utility only (no analytical impact).
+    """
     if xM: ax.xaxis.set_major_locator(MultipleLocator(xM))
     if xm: ax.xaxis.set_minor_locator(MultipleLocator(xm))
     if yM: ax.yaxis.set_major_locator(MultipleLocator(yM))
@@ -30,184 +54,565 @@ def beautify(ax, xM=None, xm=None, yM=None, ym=None):
     ax.grid(True, which="major", alpha=0.4)
     ax.grid(True, which="minor", alpha=0.15)
 
+
 def logP(df):
+    """
+    Compute -log10(P-value) while discarding invalid zero entries.
+    Used for statistical significance visualization.
+    """
     return -np.log10(df[df["pvalue"] > 0]["pvalue"])
 
+
+def agreement_ratio(df):
+    """
+    Fraction of segments where the representative word
+    exactly matches the most frequent k-mer.
+
+    Interpretation:
+    Measures consensus quality between representative-word
+    inference and raw frequency dominance.
+    """
+    return (df["representativeWord"] == df["frequentWord1"]).mean()
+
+
+def agreement_ratio_by_count(df):
+    """
+    Fraction of segments where the representative word
+    and the most frequent k-mer have identical occurrence counts.
+
+    Interpretation:
+    Stronger agreement criterion than string equality,
+    focusing on quantitative dominance.
+    """
+    return (df["representativeCount"] == df["frequentCount1"]).mean()
+
 # ============================================================
-# Load data
+# Load segmentation results
 # ============================================================
+# Each CSV corresponds to a pipeline (AVG / P-value)
+# and to real genomic data vs composition-preserving null model
 avg_real = pd.read_csv("segments_real_avg.csv")
 avg_null = pd.read_csv("segments_null_avg.csv")
 pv_real  = pd.read_csv("segments_real_pvalue.csv")
 pv_null  = pd.read_csv("segments_null_pvalue.csv")
 
+# Remove invalid segments with undefined statistical scores
 avg_real = avg_real[avg_real["pvalue"] > 0].copy()
 avg_null = avg_null[avg_null["pvalue"] > 0].copy()
 pv_real  = pv_real[pv_real["pvalue"] > 0].copy()
 pv_null  = pv_null[pv_null["pvalue"] > 0].copy()
 
+# Precompute -log10(P-value) for downstream analysis
 avg_real["logP"] = -np.log10(avg_real["pvalue"])
 pv_real["logP"]  = -np.log10(pv_real["pvalue"])
+avg_null["logP"] = -np.log10(avg_null["pvalue"])
+pv_null["logP"]  = -np.log10(pv_null["pvalue"])
 
+# Segment strength labels (used later for stratified analysis)
 classes = ["strong", "weak", "noise"]
-colors  = {"strong":"red", "weak":"orange", "noise":"blue"}
+colors  = {"strong": "red", "weak": "orange", "noise": "blue"}
 
 # ============================================================
-# 1. CDF — AVG (Real vs Null)
+# Representative–Frequent agreement analysis (string equality)
 # ============================================================
-plt.figure(figsize=(8,6))
-x,y = cdf(avg_real["pvalue"])
-xn,yn = cdf(avg_null["pvalue"])
-plt.plot(x,y,label="Real")
-plt.plot(xn,yn,"--",color="black",label="Null")
-plt.xlabel("P-value"); plt.ylabel("CDF")
-plt.title("CDF of P-values — AVG-based")
-plt.legend()
+labels = ["AVG-REAL", "AVG-NULL", "PV-REAL", "PV-NULL"]
+
+values = [
+    agreement_ratio(avg_real),
+    agreement_ratio(avg_null),
+    agreement_ratio(pv_real),
+    agreement_ratio(pv_null),
+]
+
+plt.figure(figsize=(7, 5))
+plt.bar(labels, values, edgecolor="black")
+plt.ylabel("Fraction of segments\n(repWord == frequentWord)")
+plt.title("Representative–Frequent agreement")
+plt.ylim(0, 1)
 plt.tight_layout()
-plt.savefig(f"{OUT_DIR}/fig01_cdf_avg.pdf", dpi=300)
-plt.savefig(f"{OUT_DIR}/fig01_cdf_avg.png", dpi=300)
+plt.savefig(f"{OUT_DIR}/fig01_rep_freq_agreement.png", dpi=300)
 
-# ============================================================
-# 2. CDF — P-value (Real vs Null)
-# ============================================================
-plt.figure(figsize=(8,6))
-x,y = cdf(pv_real["pvalue"])
-xn,yn = cdf(pv_null["pvalue"])
-plt.plot(x,y,label="Real")
-plt.plot(xn,yn,"--",color="black",label="Null")
-plt.xlabel("P-value"); plt.ylabel("CDF")
-plt.title("CDF of P-values — P-value-based")
-plt.legend()
+# Complementary view: false consensus rate
+plt.figure(figsize=(7, 5))
+plt.bar(labels, [1 - v for v in values],
+        edgecolor="black", color="orange")
+plt.ylabel("Fraction of segments\n(repWord ≠ frequentWord)")
+plt.title("False consensus rate")
+plt.ylim(0, 1)
 plt.tight_layout()
-plt.savefig(f"{OUT_DIR}/fig02_cdf_pvalue.pdf", dpi=300)
-plt.savefig(f"{OUT_DIR}/fig02_cdf_pvalue.png", dpi=300)
+plt.savefig(f"{OUT_DIR}/fig02_false_consensus.png", dpi=300)
 
 # ============================================================
-# 3. CDF — AVG vs P-value (Real only)
+# Representative–Frequent agreement (by count equality)
 # ============================================================
-plt.figure(figsize=(8,6))
-x1,y1 = cdf(avg_real["pvalue"])
-x2,y2 = cdf(pv_real["pvalue"])
-plt.plot(x1,y1,label="AVG-based")
-plt.plot(x2,y2,label="P-value-based")
-plt.xlabel("P-value"); plt.ylabel("CDF")
-plt.title("CDF comparison (REAL segments)")
-plt.legend()
+values = [
+    agreement_ratio_by_count(avg_real),
+    agreement_ratio_by_count(avg_null),
+    agreement_ratio_by_count(pv_real),
+    agreement_ratio_by_count(pv_null),
+]
+
+
+# ============================================================
+# Agreement analysis (by COUNT equality)
+# ============================================================
+# This analysis evaluates whether the representative word
+# captures the dominant repeat quantitatively, not only
+# lexically. A match occurs when the representative word
+# and the most frequent k-mer appear the same number of times
+# within the segment.
+
+plt.figure(figsize=(7, 5))
+plt.bar(labels, values, edgecolor="black")
+
+plt.ylabel(
+    "Fraction of segments\n"
+    "(repCount == frequentCount)"
+)
+
+plt.title(
+    "Representative–Frequent agreement (by count)"
+)
+
+plt.ylim(0, 1)
 plt.tight_layout()
-plt.savefig(f"{OUT_DIR}/fig03_cdf_compare.pdf", dpi=300)
-plt.savefig(f"{OUT_DIR}/fig03_cdf_compare.png", dpi=300)
+
+plt.savefig(
+    f"{OUT_DIR}/fig01_rep_freq_count_agreement.png",
+    dpi=300
+)
 
 # ============================================================
-# 4. Histogram of significance
+# False consensus rate (by COUNT)
 # ============================================================
-plt.figure(figsize=(9,5))
-plt.hist(avg_real["logP"], bins=40, alpha=0.7, label="AVG")
-plt.hist(pv_real["logP"],  bins=40, alpha=0.7, label="P-value")
-plt.xlabel("-log10(P-value)")
-plt.ylabel("Number of segments")
-plt.title("Distribution of statistical significance")
-plt.legend()
+# Complementary view: segments where the representative word
+# does NOT match the dominant k-mer in terms of occurrence count.
+# This highlights cases where a consensus pattern is inferred,
+# but does not correspond to the most frequent repeat.
+
+plt.figure(figsize=(7, 5))
+plt.bar(
+    labels,
+    [1 - v for v in values],
+    edgecolor="black",
+    color="orange"
+)
+
+plt.ylabel(
+    "Fraction of segments\n"
+    "(repCount ≠ frequentCount)"
+)
+
+plt.title(
+    "False consensus rate (by count)"
+)
+
+plt.ylim(0, 1)
 plt.tight_layout()
-plt.savefig(f"{OUT_DIR}/fig04_hist_logp.pdf", dpi=300)
-plt.savefig(f"{OUT_DIR}/fig04_hist_logp.png", dpi=300)
+
+plt.savefig(
+    f"{OUT_DIR}/fig02_false_consensus_count.png",
+    dpi=300
+)
 
 # ============================================================
-# 5. CDF separation (Real − Null)
+# AVG distribution as percentage of segments (clean style)
 # ============================================================
-p_grid = np.logspace(-6,-1,400)
 
-def interp_cdf(v):
-    x,y = cdf(v)
-    return np.interp(p_grid,x,y,left=0,right=1)
+real = avg_real["AVG"].values
+null = avg_null["AVG"].values
 
-plt.figure(figsize=(8,6))
-plt.plot(p_grid, interp_cdf(avg_real["pvalue"]) - interp_cdf(avg_null["pvalue"]), label="AVG")
-plt.plot(p_grid, interp_cdf(pv_real["pvalue"])  - interp_cdf(pv_null["pvalue"]),  label="P-value")
-plt.axhline(0,color="black",ls="--")
-plt.xscale("log")
-plt.xlabel("P-value")
-plt.ylabel("CDF(real) − CDF(null)")
-plt.title("Separation between real and null")
-plt.legend()
-plt.tight_layout()
-plt.savefig(f"{OUT_DIR}/fig05_cdf_separation.pdf", dpi=300)
-plt.savefig(f"{OUT_DIR}/fig05_cdf_separation.png", dpi=300)
+# Define bin step for AVG (%)
+STEP = 1
 
-# ============================================================
-# 6. KS test + bar plot
-# ============================================================
-ks_avg = ks_2samp(avg_real["pvalue"], avg_null["pvalue"])
-ks_pv  = ks_2samp(pv_real["pvalue"],  pv_null["pvalue"])
+# Determine range
+x_min = int(np.floor(min(real.min(), null.min())))
+x_max = int(np.ceil(max(real.max(), null.max())))
 
-plt.figure(figsize=(6,4))
-plt.bar(["AVG","P-value"], [ks_avg.statistic, ks_pv.statistic], edgecolor="black")
-plt.ylabel("KS distance")
-plt.title("KS test: Real vs Null")
-plt.tight_layout()
-plt.savefig(f"{OUT_DIR}/fig06_ks.pdf", dpi=300)
-plt.savefig(f"{OUT_DIR}/fig06_ks.png", dpi=300)
+bins = np.arange(x_min, x_max + STEP, STEP)
 
-# ============================================================
-# 7. Class distribution (counts)
-# ============================================================
-cnt_avg = avg_real["class"].value_counts().reindex(classes, fill_value=0)
-cnt_pv  = pv_real["class"].value_counts().reindex(classes, fill_value=0)
+# Convert counts to percentages
+weights_real = np.ones_like(real) / len(real) * 100
+weights_null = np.ones_like(null) / len(null) * 100
 
-x = np.arange(len(classes))
-w = 0.35
+plt.figure(figsize=(12, 5))
 
-plt.figure(figsize=(7,5))
-plt.bar(x-w/2, cnt_avg, w, label="AVG")
-plt.bar(x+w/2, cnt_pv,  w, label="P-value")
-plt.xticks(x,[c.upper() for c in classes])
-plt.ylabel("Number of segments")
-plt.title("Class distribution (REAL)")
-plt.legend()
-plt.tight_layout()
-plt.savefig(f"{OUT_DIR}/fig07_class_counts.pdf", dpi=300)
-plt.savefig(f"{OUT_DIR}/fig07_class_counts.png", dpi=300)
+plt.hist(real, bins=bins, weights=weights_real, alpha=0.7, label="Real")
+plt.hist(null, bins=bins, weights=weights_null, alpha=0.7, label="Null")
 
-# ============================================================
-# 8. AVG per class
-# ============================================================
-plt.figure(figsize=(8,5))
-data = [avg_real[avg_real["class"]==c]["AVG"] for c in classes]
-plt.boxplot(data, labels=[c.upper() for c in classes], showfliers=False)
-plt.ylabel("AVG match (%)")
-plt.title("AVG distribution per class (REAL)")
-plt.tight_layout()
-plt.savefig(f"{OUT_DIR}/fig08_avg_per_class.pdf", dpi=300)
-plt.savefig(f"{OUT_DIR}/fig08_avg_per_class.png", dpi=300)
-
-# ============================================================
-# 9. Significance per class
-# ============================================================
-plt.figure(figsize=(8,5))
-data = [avg_real[avg_real["class"]==c]["logP"] for c in classes]
-plt.boxplot(data, labels=[c.upper() for c in classes], showfliers=False)
-plt.ylabel("-log10(P-value)")
-plt.title("Statistical significance per class (REAL)")
-plt.tight_layout()
-plt.savefig(f"{OUT_DIR}/fig09_logp_per_class.pdf", dpi=300)
-plt.savefig(f"{OUT_DIR}/fig09_logp_per_class.png", dpi=300)
-
-# ============================================================
-# 10. AVG vs significance (colored)
-# ============================================================
-plt.figure(figsize=(8,6))
-for c in classes:
-    d = avg_real[avg_real["class"]==c]
-    plt.scatter(d["AVG"], d["logP"], label=c.upper(), color=colors[c], alpha=0.6)
-
+# Labels and title
 plt.xlabel("AVG match (%)")
-plt.ylabel("-log10(P-value)")
-plt.title("AVG vs statistical significance (REAL)")
-plt.legend()
+plt.ylabel("Percentage of segments (%)")
+plt.title("AVG distribution (AVG pipeline)")
+
+# X-axis formatting
+plt.xticks(np.arange(x_min, x_max + 1, 1), fontsize=8)
+plt.xlim(x_min, x_max)
+
+# Y-axis formatting (small fixed steps)
+y_max = plt.ylim()[1]
+y_max_round = int(np.ceil(y_max / 2) * 2)
+plt.ylim(0, y_max_round)
+plt.yticks(np.arange(0, y_max_round + 0.1, 2), fontsize=8)
+
+# Legend outside
+plt.legend(
+    loc="center left",
+    bbox_to_anchor=(1.01, 0.5),
+    frameon=True
+)
+
 plt.tight_layout()
-plt.savefig(f"{OUT_DIR}/fig10_avg_vs_logp.pdf", dpi=300)
-plt.savefig(f"{OUT_DIR}/fig10_avg_vs_logp.png", dpi=300)
+plt.savefig(
+    f"{OUT_DIR}/fig_avg_distribution_percent_clean.png",
+    dpi=300,
+    bbox_inches="tight"
+)
+# ============================================================
+# AVG distribution as percentage of segments (P-VALUE pipeline)
+# ============================================================
+
+real = pv_real["AVG"].values
+null = pv_null["AVG"].values
+
+# Define bin step for AVG (%)
+STEP = 1
+
+# Determine range
+x_min = int(np.floor(min(real.min(), null.min())))
+x_max = int(np.ceil(max(real.max(), null.max())))
+
+bins = np.arange(x_min, x_max + STEP, STEP)
+
+# Convert counts to percentages
+weights_real = np.ones_like(real) / len(real) * 100
+weights_null = np.ones_like(null) / len(null) * 100
+
+plt.figure(figsize=(12, 5))
+
+plt.hist(real, bins=bins, weights=weights_real,
+         alpha=0.7, label="Real")
+
+plt.hist(null, bins=bins, weights=weights_null,
+         alpha=0.7, label="Null")
+
+# Labels and title
+plt.xlabel("AVG match (%)")
+plt.ylabel("Percentage of segments (%)")
+plt.title("AVG distribution (P-value pipeline)")
+
+# X-axis formatting
+plt.xticks(np.arange(x_min, x_max + 1, 1), fontsize=8)
+plt.xlim(x_min, x_max)
+
+# Y-axis formatting (small fixed steps)
+y_max = plt.ylim()[1]
+y_max_round = int(np.ceil(y_max / 2) * 2)
+plt.ylim(0, y_max_round)
+plt.yticks(np.arange(0, y_max_round + 0.1, 2), fontsize=8)
+
+# Legend outside
+plt.legend(
+    loc="center left",
+    bbox_to_anchor=(1.01, 0.5),
+    frameon=True
+)
+
+plt.tight_layout()
+plt.savefig(
+    f"{OUT_DIR}/fig_avg_distribution_percent_pvalue_pipeline.png",
+    dpi=300,
+    bbox_inches="tight"
+)
+
+
+
+
+def word_length(df):
+    """
+    Returns the length (K) of the representative word
+    for each detected segment.
+    """
+    return df["representativeWord"].str.len()
 
 # ============================================================
-# Show all figures together
+# Representative word length distribution – AVG pipeline
 # ============================================================
+# This histogram shows the distribution of selected word lengths (K)
+# in the AVG-based pipeline. Since K is chosen by maximizing average
+# positional agreement, the pipeline may exhibit a bias toward longer
+# words that accumulate smoother matches.
+
+plt.figure(figsize=(7, 5))
+
+plt.hist(
+    word_length(avg_real),
+    bins=np.arange(2, 10) - 0.5,
+    alpha=0.7,
+    label="Real"
+)
+
+plt.hist(
+    word_length(avg_null),
+    bins=np.arange(2, 10) - 0.5,
+    alpha=0.7,
+    label="Null"
+)
+
+plt.xlabel("Word length (K)")
+plt.ylabel("Number of segments")
+plt.title("Distribution of representative word length (AVG pipeline)")
+plt.legend()
+plt.tight_layout()
+
+plt.savefig(
+    f"{OUT_DIR}/fig_word_length_avg_pipeline.png",
+    dpi=300
+)
+
+# ============================================================
+# Representative word length distribution – P-value pipeline
+# ============================================================
+# This histogram shows the distribution of K selected by the
+# statistical (P-value–based) pipeline. Here, K is chosen by
+# minimizing the combined positional P-value, allowing the
+# pipeline to adaptively favor word lengths that yield the
+# strongest statistical signal rather than maximal smoothness.
+
+plt.figure(figsize=(7, 5))
+
+plt.hist(
+    word_length(pv_real),
+    bins=np.arange(2, 10) - 0.5,
+    alpha=0.7,
+    label="Real"
+)
+
+plt.hist(
+    word_length(pv_null),
+    bins=np.arange(2, 10) - 0.5,
+    alpha=0.7,
+    label="Null"
+)
+
+plt.xlabel("Word length (K)")
+plt.ylabel("Number of segments")
+plt.title("Distribution of representative word length (P-value pipeline)")
+plt.legend()
+plt.tight_layout()
+
+plt.savefig(
+    f"{OUT_DIR}/fig_word_length_pvalue_pipeline.png",
+    dpi=300
+)
+
+# ============================================================
+# Percentage histogram with clean axes and external legend
+# ============================================================
+
+real = avg_real["logP"].values
+null = avg_null["logP"].values
+
+CUT = 35
+
+x_max = int(np.ceil(np.max(np.concatenate([real, null]))))
+
+if x_max <= CUT:
+    bins = np.arange(0, x_max + 1, 1)
+else:
+    bins = np.concatenate([
+        np.arange(0, CUT + 1, 1),
+        [x_max + 1]
+    ])
+
+
+# Convert counts to percentages
+weights_real = np.ones_like(real) / len(real) * 100
+weights_null = np.ones_like(null) / len(null) * 100
+
+plt.figure(figsize=(12, 5))
+
+plt.hist(real, bins=bins, weights=weights_real, alpha=0.7, label="Real")
+plt.hist(null, bins=bins, weights=weights_null, alpha=0.7, label="Null")
+
+# Labels and title
+plt.xlabel("-log10(P-value)")
+plt.ylabel("Percentage of segments (%)")
+plt.title("Statistical significance distribution (AVG pipeline)")
+
+# X-axis: unit steps
+plt.xticks(np.arange(0, CUT + 1, 1), fontsize=8)
+plt.xlim(0, CUT + 1)
+
+# Y-axis: small fixed steps
+y_max = plt.ylim()[1]
+y_max_round = int(np.ceil(y_max / 2) * 2)  # round to nearest 2%
+plt.ylim(0, y_max_round)
+plt.yticks(np.arange(0, y_max_round + 0.1, 2), fontsize=8)
+
+# Overflow bin label
+plt.text(
+    CUT + 0.5,
+    y_max_round * 0.95,
+    "≥35",
+    ha="center",
+    va="top",
+    fontsize=10,
+    fontweight="bold"
+)
+
+# Legend outside the plot
+plt.legend(
+    loc="center left",
+    bbox_to_anchor=(1.01, 0.5),
+    frameon=True
+)
+
+plt.tight_layout()
+plt.savefig(
+    f"{OUT_DIR}/fig_logp_distribution_0_35_overflow_percent_clean.png",
+    dpi=300,
+    bbox_inches="tight"
+)
+# ============================================================
+# P-VALUE pipeline: percentage histogram with overflow bin
+# ============================================================
+
+real = pv_real["logP"].values
+null = pv_null["logP"].values
+
+CUT = 35
+
+# Determine maximum logP
+x_max = int(np.ceil(np.max(np.concatenate([real, null]))))
+
+# Define bins: unit bins up to 35 + overflow bin
+if x_max <= CUT:
+    bins = np.arange(0, x_max + 1, 1)
+else:
+    bins = np.concatenate([
+        np.arange(0, CUT + 1, 1),
+        [x_max + 1]
+    ])
+
+
+# Convert counts to percentages
+weights_real = np.ones_like(real) / len(real) * 100
+weights_null = np.ones_like(null) / len(null) * 100
+
+plt.figure(figsize=(12, 5))
+
+# Plot histograms
+plt.hist(real, bins=bins, weights=weights_real, alpha=0.7, label="Real")
+plt.hist(null, bins=bins, weights=weights_null, alpha=0.7, label="Null")
+
+# Labels and title
+plt.xlabel("-log10(P-value)")
+plt.ylabel("Percentage of segments (%)")
+plt.title("Statistical significance distribution (P-value pipeline)")
+
+# X-axis: unit steps
+plt.xticks(np.arange(0, CUT + 1, 1), fontsize=8)
+plt.xlim(0, CUT + 1)
+
+# Y-axis: fixed small steps
+y_max = plt.ylim()[1]
+y_max_round = int(np.ceil(y_max / 2) * 2)
+plt.ylim(0, y_max_round)
+plt.yticks(np.arange(0, y_max_round + 0.1, 2), fontsize=8)
+
+# Overflow bin label
+plt.text(
+    CUT + 0.5,
+    y_max_round * 0.95,
+    "≥35",
+    ha="center",
+    va="top",
+    fontsize=10,
+    fontweight="bold"
+)
+
+# Legend outside the plot
+plt.legend(
+    loc="center left",
+    bbox_to_anchor=(1.01, 0.5),
+    frameon=True
+)
+
+plt.tight_layout()
+plt.savefig(
+    f"{OUT_DIR}/fig_logp_distribution_pvalue_pipeline.png",
+    dpi=300,
+    bbox_inches="tight"
+)
+
+plt.figure(figsize=(8,6))
+
+# CDF of -log10(P-value) for real segments only
+# This comparison isolates the behavior of the two pipelines
+# on real genomic data, without interference from null models.
+
+# AVG pipeline (Real)
+x1, y1 = cdf(avg_real["logP"])
+
+# P-value pipeline (Real)
+x2, y2 = cdf(pv_real["logP"])
+
+plt.plot(x1, y1, label="AVG pipeline (Real)")
+plt.plot(x2, y2, label="P-value pipeline (Real)")
+
+plt.xlabel("-log10(P-value)")
+plt.ylabel("CDF")
+plt.title("CDF comparison: AVG vs P-value pipeline (Real segments)")
+plt.legend()
+plt.tight_layout()
+
+plt.savefig(
+    f"{OUT_DIR}/fig_cdf_avg_vs_pvalue_real.png",
+    dpi=300
+)
+
+
+
+plt.figure(figsize=(8,6))
+
+# AVG pipeline
+plt.plot(*cdf(avg_real["logP"]), label="AVG-Real")
+plt.plot(*cdf(avg_null["logP"]), "--", label="AVG-Null")
+
+# P-value pipeline
+plt.plot(*cdf(pv_real["logP"]), label="P-value-Real")
+plt.plot(*cdf(pv_null["logP"]), "--", label="P-value-Null")
+
+plt.xlabel("-log10(P-value)")
+plt.ylabel("CDF")
+plt.title("CDF of statistical significance (all pipelines)")
+plt.legend()
+plt.tight_layout()
+
+plt.savefig(
+    f"{OUT_DIR}/fig_cdf_all_pipelines.png",
+    dpi=300
+)
+
+
+
+THRESHOLDS = [5, 10, 20]
+
+def fraction_above(df, t):
+    """
+    Percentage of segments whose statistical significance
+    exceeds a given -log10(P-value) threshold.
+    """
+    return (df["logP"] >= t).mean() * 100
+
+print("\n=== Percentage of segments above significance thresholds ===")
+
+for t in THRESHOLDS:
+    print(f"\nThreshold: -log10(P) >= {t}")
+
+    print(f"AVG-Real   : {fraction_above(avg_real, t):.2f}%")
+    print(f"AVG-Null   : {fraction_above(avg_null, t):.2f}%")
+    print(f"PVal-Real  : {fraction_above(pv_real, t):.2f}%")
+    print(f"PVal-Null  : {fraction_above(pv_null, t):.2f}%")
 plt.show()
