@@ -158,26 +158,6 @@ All plots are generated for:
 
 ---
 
-## Repository Structure
-
-.
-├── src/ # C++ implementation
-│ ├── segmentation.cpp
-│ ├── representative.cpp
-│ ├── statistics.cpp
-│ └── pipeline.cpp
-│
-├── analysis/ # Python analysis scripts
-│ ├── analyze_results.py
-│
-├── data/ # Input DNA and CSV outputs
-│
-├── figures/ # Generated plots
-│
-├── README.md
-
----
-
 ## Why This Algorithm Matters
 
 - Detects hidden periodicity missed by classical repeat finders
